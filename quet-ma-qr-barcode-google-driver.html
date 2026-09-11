@@ -105,7 +105,6 @@
     font-size: 12px;
     margin-left: 6px;
   }
-  #googleBtn { background: #4285f4; color: white; }
   #sheetBtn { background: #0f9d58; color: white; }
   #sheetLink {
     display: none;
@@ -120,11 +119,72 @@
     color: #9ca3af;
     margin-top: 6px;
   }
+  /* Nút "Sign in with Google" kiểu chuẩn */
+  .gsi-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    width: 100%;
+    background: #fff;
+    color: #3c4043;
+    border: 1px solid #dadce0;
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-size: 14px;
+    font-weight: 500;
+    font-family: Roboto, -apple-system, sans-serif;
+    cursor: pointer;
+  }
+  .gsi-btn:hover { background: #f7f8f8; }
+  .gsi-btn svg { width: 18px; height: 18px; flex: none; }
+  .profile-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: #12151b;
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .profile-row img {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    flex: none;
+  }
+  .profile-info { flex: 1; min-width: 0; }
+  .profile-name { font-size: 14px; font-weight: 600; color: #fff; }
+  .profile-email { font-size: 12px; color: #9ca3af; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #signOutBtn {
+    background: transparent;
+    color: #ef4444;
+    flex: none;
+    min-width: unset;
+    padding: 6px 10px;
+    font-size: 13px;
+  }
 </style>
 </head>
 <body>
 
 <h1>📷 Quét mã QR / Barcode</h1>
+
+<div class="card">
+  <div id="signedOutView">
+    <button id="googleSignInBtn" class="gsi-btn">
+      <svg viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.9 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.1 8 3l6-6C34.5 5.5 29.6 3.5 24 3.5 12.7 3.5 3.5 12.7 3.5 24S12.7 44.5 24 44.5 44.5 35.3 44.5 24c0-1.2-.1-2.4-.3-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.6 15.9 18.9 13 24 13c3.1 0 5.8 1.1 8 3l6-6C34.5 6.5 29.6 4.5 24 4.5c-7.6 0-14.1 4.3-17.7 10.2z"/><path fill="#4CAF50" d="M24 44.5c5.5 0 10.4-1.9 14.1-5.1l-6.5-5.5c-2 1.5-4.6 2.4-7.6 2.4-5.3 0-9.7-3.1-11.3-7.5l-6.5 5C9.8 40.1 16.4 44.5 24 44.5z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.2-4.2 5.6l6.5 5.5C41 36.6 44.5 30.8 44.5 24c0-1.2-.1-2.4-.3-3.5z"/></svg>
+      Đăng nhập bằng Google
+    </button>
+  </div>
+  <div id="signedInView" class="profile-row" style="display:none;">
+    <img id="profilePic" src="" alt="">
+    <div class="profile-info">
+      <div class="profile-name" id="profileName"></div>
+      <div class="profile-email" id="profileEmail"></div>
+    </div>
+    <button id="signOutBtn">Đăng xuất</button>
+  </div>
+</div>
 
 <div class="card">
   <div id="reader"></div>
@@ -159,10 +219,9 @@
     <button id="clearBtn">🗑️ Xoá tất cả</button>
   </div>
   <div class="btn-row">
-    <button id="googleBtn">🔑 Kết nối Google</button>
     <button id="sheetBtn" disabled>📤 Lưu vào Google Sheet</button>
   </div>
-  <div id="googleStatus">Chưa kết nối Google</div>
+  <div id="googleStatus">Đăng nhập Google ở trên để lưu vào Sheet</div>
   <div id="sheetLink"></div>
 </div>
 
@@ -338,48 +397,69 @@ document.getElementById('clearBtn').addEventListener('click', () => {
 
 renderTable();
 
-/* ===================== GOOGLE SHEETS INTEGRATION ===================== */
+/* ===================== GOOGLE SIGN-IN + SHEETS INTEGRATION ===================== */
 
 // 1) Vào https://console.cloud.google.com/ tạo project, bật "Google Sheets API"
 // 2) Tạo OAuth Client ID (Web application), thêm domain bạn host file này vào
 //    "Authorized JavaScript origins"
 // 3) Dán Client ID vào biến bên dưới
 const GOOGLE_CLIENT_ID = "DÁN_CLIENT_ID_CỦA_BẠN_VÀO_ĐÂY.apps.googleusercontent.com";
-const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
+const OAUTH_SCOPE = "openid email profile https://www.googleapis.com/auth/spreadsheets";
 
 let accessToken = null;
 let tokenClient = null;
 let currentSpreadsheetId = null; // sau lần lưu đầu tiên, các lần sau sẽ cập nhật cùng 1 sheet
 
-const googleBtn = document.getElementById('googleBtn');
 const sheetBtn = document.getElementById('sheetBtn');
 const googleStatus = document.getElementById('googleStatus');
 const sheetLink = document.getElementById('sheetLink');
+const googleSignInBtn = document.getElementById('googleSignInBtn');
+const signedOutView = document.getElementById('signedOutView');
+const signedInView = document.getElementById('signedInView');
+const profilePic = document.getElementById('profilePic');
+const profileName = document.getElementById('profileName');
+const profileEmail = document.getElementById('profileEmail');
+const signOutBtn = document.getElementById('signOutBtn');
 
 function initGoogleClient() {
   if (typeof google === 'undefined' || !google.accounts) {
-    googleStatus.textContent = '⏳ Đang tải thư viện Google...';
     setTimeout(initGoogleClient, 300);
     return;
   }
   tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: GOOGLE_CLIENT_ID,
-    scope: SHEETS_SCOPE,
-    callback: (resp) => {
+    scope: OAUTH_SCOPE,
+    callback: async (resp) => {
       if (resp.error) {
-        googleStatus.textContent = '❌ Kết nối thất bại: ' + resp.error;
+        googleStatus.textContent = '❌ Đăng nhập thất bại: ' + resp.error;
         return;
       }
       accessToken = resp.access_token;
-      googleStatus.textContent = '✅ Đã kết nối Google';
-      sheetBtn.disabled = false;
-      googleBtn.textContent = '🔑 Đã kết nối';
+      await loadProfileAndShow();
     }
   });
 }
 initGoogleClient();
 
-googleBtn.addEventListener('click', () => {
+async function loadProfileAndShow() {
+  try {
+    const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { 'Authorization': 'Bearer ' + accessToken }
+    });
+    const profile = await res.json();
+    profilePic.src = profile.picture || '';
+    profileName.textContent = profile.name || profile.email || 'Tài khoản Google';
+    profileEmail.textContent = profile.email || '';
+    signedOutView.style.display = 'none';
+    signedInView.style.display = 'flex';
+    sheetBtn.disabled = false;
+    googleStatus.textContent = '✅ Sẵn sàng lưu vào Google Sheet';
+  } catch (e) {
+    googleStatus.textContent = '❌ Không lấy được thông tin tài khoản';
+  }
+}
+
+googleSignInBtn.addEventListener('click', () => {
   if (GOOGLE_CLIENT_ID.includes('DÁN_CLIENT_ID')) {
     alert('Bạn cần dán Google Client ID của mình vào code trước (xem chú thích trong file HTML).');
     return;
@@ -388,7 +468,21 @@ googleBtn.addEventListener('click', () => {
     alert('Thư viện Google chưa sẵn sàng, thử lại sau vài giây.');
     return;
   }
-  tokenClient.requestAccessToken({ prompt: accessToken ? '' : 'consent' });
+  // prompt: 'select_account' luôn mở cửa sổ chọn tài khoản Google, giống các app khác
+  tokenClient.requestAccessToken({ prompt: 'select_account' });
+});
+
+signOutBtn.addEventListener('click', () => {
+  if (accessToken) {
+    google.accounts.oauth2.revoke(accessToken, () => {});
+  }
+  accessToken = null;
+  currentSpreadsheetId = null;
+  signedInView.style.display = 'none';
+  signedOutView.style.display = 'block';
+  sheetBtn.disabled = true;
+  sheetLink.style.display = 'none';
+  googleStatus.textContent = 'Đăng nhập Google ở trên để lưu vào Sheet';
 });
 
 async function createNewSpreadsheet(title) {
@@ -455,11 +549,12 @@ sheetBtn.addEventListener('click', async () => {
     sheetLink.innerHTML = `✅ Đã lưu — <a href="${url}" target="_blank" rel="noopener">Mở Google Sheet</a>`;
     googleStatus.textContent = '✅ Đã đồng bộ với Google Sheet';
   } catch (err) {
-    // Token có thể đã hết hạn, yêu cầu kết nối lại
+    // Token có thể đã hết hạn, yêu cầu đăng nhập lại
     if (String(err.message).includes('401') || String(err.message).includes('403')) {
       accessToken = null;
-      googleBtn.textContent = '🔑 Kết nối Google';
-      googleStatus.textContent = '⚠️ Phiên hết hạn, hãy kết nối lại';
+      signedInView.style.display = 'none';
+      signedOutView.style.display = 'block';
+      googleStatus.textContent = '⚠️ Phiên hết hạn, hãy đăng nhập lại';
     } else {
       googleStatus.textContent = '❌ Lỗi: ' + err.message;
     }
