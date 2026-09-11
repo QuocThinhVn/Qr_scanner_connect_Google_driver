@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Quét mã QR / Barcode → Excel</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: #0f1115;
+    color: #e8e8ec;
+    min-height: 100vh;
+    padding: 16px;
+  }
+  h1 {
+    font-size: 20px;
+    text-align: center;
+    margin: 0 0 16px;
+    color: #fff;
+  }
+  .card {
+    background: #1a1d24;
+    border-radius: 14px;
+    padding: 16px;
+    margin-bottom: 16px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+  }
+  #reader {
+    width: 100%;
+    border-radius: 10px;
+    overflow: hidden;
+    background: #000;
+  }
+  .btn-row {
+    display: flex;
+    gap: 10px;
+    margin-top: 12px;
+    flex-wrap: wrap;
+  }
+  button {
+    flex: 1;
+    min-width: 120px;
+    padding: 12px 14px;
+    border: none;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  button:active { opacity: 0.75; }
+  #startBtn { background: #3b82f6; color: white; }
+  #stopBtn { background: #f97316; color: white; }
+  #exportBtn { background: #22c55e; color: white; }
+  #clearBtn { background: #ef4444; color: white; }
+  button:disabled { background: #333844; color: #777; cursor: not-allowed; }
+  #status {
+    text-align: center;
+    font-size: 13px;
+    color: #9ca3af;
+    margin-top: 8px;
+    min-height: 18px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  th, td {
+    padding: 8px 6px;
+    text-align: left;
+    border-bottom: 1px solid #2a2e37;
+    word-break: break-all;
+  }
+  th {
+    color: #9ca3af;
+    font-weight: 600;
+    font-size: 12px;
+  }
+  .del-btn {
+    background: transparent;
+    color: #ef4444;
+    font-size: 16px;
+    padding: 2px 8px;
+    flex: none;
+    min-width: unset;
+  }
+  .empty-msg {
+    text-align: center;
+    color: #6b7280;
+    padding: 20px 0;
+    font-size: 13px;
+  }
+  .count-badge {
+    display: inline-block;
+    background: #3b82f6;
+    color: white;
+    border-radius: 999px;
+    padding: 2px 10px;
+    font-size: 12px;
+    margin-left: 6px;
+  }
+  #googleBtn { background: #4285f4; color: white; }
+  #sheetBtn { background: #0f9d58; color: white; }
+  #sheetLink {
+    display: none;
+    text-align: center;
+    font-size: 13px;
+    margin-top: 8px;
+  }
+  #sheetLink a { color: #60a5fa; }
+  #googleStatus {
+    text-align: center;
+    font-size: 12px;
+    color: #9ca3af;
+    margin-top: 6px;
+  }
+</style>
+</head>
+<body>
+
+<h1>📷 Quét mã QR / Barcode</h1>
+
+<div class="card">
+  <div id="reader"></div>
+  <div class="btn-row">
+    <button id="startBtn">Bắt đầu quét</button>
+    <button id="stopBtn" disabled>Dừng quét</button>
+  </div>
+  <div id="status">Nhấn "Bắt đầu quét" và cho phép truy cập camera</div>
+</div>
+
+<div class="card">
+  <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+    <strong>Danh sách đã quét<span class="count-badge" id="countBadge">0</span></strong>
+  </div>
+  <div id="tableWrap">
+    <div class="empty-msg" id="emptyMsg">Chưa có mã nào được quét</div>
+    <table id="dataTable" style="display:none;">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Nội dung</th>
+          <th>Loại mã</th>
+          <th>Thời gian</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="tableBody"></tbody>
+    </table>
+  </div>
+  <div class="btn-row">
+    <button id="exportBtn">⬇️ Xuất Excel</button>
+    <button id="clearBtn">🗑️ Xoá tất cả</button>
+  </div>
+  <div class="btn-row">
+    <button id="googleBtn">🔑 Kết nối Google</button>
+    <button id="sheetBtn" disabled>📤 Lưu vào Google Sheet</button>
+  </div>
+  <div id="googleStatus">Chưa kết nối Google</div>
+  <div id="sheetLink"></div>
+</div>
+
+<script>
+let scanner = null;
+let isScanning = false;
+let scannedList = []; // {content, format, time}
+let lastScan = { text: null, ts: 0 };
+
+const statusEl = document.getElementById('status');
+const startBtn = document.getElementById('startBtn');
+const stopBtn = document.getElementById('stopBtn');
+const tableBody = document.getElementById('tableBody');
+const dataTable = document.getElementById('dataTable');
+const emptyMsg = document.getElementById('emptyMsg');
+const countBadge = document.getElementById('countBadge');
+
+function formatTime(d) {
+  const pad = n => String(n).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())} ${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()}`;
+}
+
+function beep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.15, ctx.currentTime);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.12);
+  } catch (e) {}
+}
+
+function onScanSuccess(decodedText, decodedResult) {
+  const now = Date.now();
+  // Tránh lặp lại cùng 1 mã liên tục trong 2 giây
+  if (decodedText === lastScan.text && (now - lastScan.ts) < 2000) return;
+  lastScan = { text: decodedText, ts: now };
+
+  const format = (decodedResult && decodedResult.result && decodedResult.result.format
+    ? decodedResult.result.format.formatName
+    : (decodedResult && decodedResult.result && decodedResult.result.formatName)) || 'Không rõ';
+
+  const item = {
+    content: decodedText,
+    format: format,
+    time: formatTime(new Date())
+  };
+  scannedList.push(item);
+  renderTable();
+  beep();
+  statusEl.textContent = `✅ Đã quét: ${decodedText.substring(0, 40)}${decodedText.length > 40 ? '...' : ''}`;
+}
+
+function onScanFailure() {
+  // im lặng, gọi liên tục khi chưa tìm thấy mã
+}
+
+function renderTable() {
+  countBadge.textContent = scannedList.length;
+  if (scannedList.length === 0) {
+    dataTable.style.display = 'none';
+    emptyMsg.style.display = 'block';
+    return;
+  }
+  dataTable.style.display = 'table';
+  emptyMsg.style.display = 'none';
+  tableBody.innerHTML = '';
+  scannedList.forEach((item, idx) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${idx + 1}</td>
+      <td>${escapeHtml(item.content)}</td>
+      <td>${escapeHtml(item.format)}</td>
+      <td>${item.time}</td>
+      <td><button class="del-btn" data-idx="${idx}">✕</button></td>
+    `;
+    tableBody.appendChild(tr);
+  });
+  document.querySelectorAll('.del-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const idx = parseInt(e.target.getAttribute('data-idx'));
+      scannedList.splice(idx, 1);
+      renderTable();
+    });
+  });
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+startBtn.addEventListener('click', async () => {
+  if (isScanning) return;
+  statusEl.textContent = 'Đang khởi động camera...';
+  scanner = new Html5Qrcode("reader", {
+    formatsToSupport: [
+      Html5QrcodeSupportedFormats.QR_CODE,
+      Html5QrcodeSupportedFormats.EAN_13,
+      Html5QrcodeSupportedFormats.EAN_8,
+      Html5QrcodeSupportedFormats.CODE_128,
+      Html5QrcodeSupportedFormats.CODE_39,
+      Html5QrcodeSupportedFormats.UPC_A,
+      Html5QrcodeSupportedFormats.UPC_E,
+      Html5QrcodeSupportedFormats.ITF,
+      Html5QrcodeSupportedFormats.CODABAR
+    ],
+    verbose: false
+  });
+  const config = {
+    fps: 10,
+    qrbox: { width: 260, height: 200 },
+    aspectRatio: 1.0
+  };
+  try {
+    await scanner.start(
+      { facingMode: "environment" },
+      config,
+      onScanSuccess,
+      onScanFailure
+    );
+    isScanning = true;
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+    statusEl.textContent = '📡 Đang quét — đưa mã vào khung hình';
+  } catch (err) {
+    statusEl.textContent = '❌ Không thể mở camera: ' + err;
+  }
+});
+
+stopBtn.addEventListener('click', async () => {
+  if (!isScanning || !scanner) return;
+  try {
+    await scanner.stop();
+    scanner.clear();
+  } catch (e) {}
+  isScanning = false;
+  startBtn.disabled = false;
+  stopBtn.disabled = true;
+  statusEl.textContent = 'Đã dừng quét';
+});
+
+document.getElementById('exportBtn').addEventListener('click', () => {
+  if (scannedList.length === 0) {
+    alert('Chưa có dữ liệu để xuất!');
+    return;
+  }
+  const wsData = [
+    ['STT', 'Nội dung mã', 'Loại mã', 'Thời gian quét'],
+    ...scannedList.map((item, idx) => [idx + 1, item.content, item.format, item.time])
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(wsData);
+  ws['!cols'] = [{ wch: 6 }, { wch: 45 }, { wch: 16 }, { wch: 20 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'DanhSachMa');
+  const now = new Date();
+  const fname = `danh-sach-ma-${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}-${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}.xlsx`;
+  XLSX.writeFile(wb, fname);
+});
+
+document.getElementById('clearBtn').addEventListener('click', () => {
+  if (scannedList.length === 0) return;
+  if (confirm('Xoá toàn bộ danh sách đã quét?')) {
+    scannedList = [];
+    renderTable();
+  }
+});
+
+renderTable();
+
+/* ===================== GOOGLE SHEETS INTEGRATION ===================== */
+
+// 1) Vào https://console.cloud.google.com/ tạo project, bật "Google Sheets API"
+// 2) Tạo OAuth Client ID (Web application), thêm domain bạn host file này vào
+//    "Authorized JavaScript origins"
+// 3) Dán Client ID vào biến bên dưới
+const GOOGLE_CLIENT_ID = "DÁN_CLIENT_ID_CỦA_BẠN_VÀO_ĐÂY.apps.googleusercontent.com";
+const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
+
+let accessToken = null;
+let tokenClient = null;
+let currentSpreadsheetId = null; // sau lần lưu đầu tiên, các lần sau sẽ cập nhật cùng 1 sheet
+
+const googleBtn = document.getElementById('googleBtn');
+const sheetBtn = document.getElementById('sheetBtn');
+const googleStatus = document.getElementById('googleStatus');
+const sheetLink = document.getElementById('sheetLink');
+
+function initGoogleClient() {
+  if (typeof google === 'undefined' || !google.accounts) {
+    googleStatus.textContent = '⏳ Đang tải thư viện Google...';
+    setTimeout(initGoogleClient, 300);
+    return;
+  }
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: GOOGLE_CLIENT_ID,
+    scope: SHEETS_SCOPE,
+    callback: (resp) => {
+      if (resp.error) {
+        googleStatus.textContent = '❌ Kết nối thất bại: ' + resp.error;
+        return;
+      }
+      accessToken = resp.access_token;
+      googleStatus.textContent = '✅ Đã kết nối Google';
+      sheetBtn.disabled = false;
+      googleBtn.textContent = '🔑 Đã kết nối';
+    }
+  });
+}
+initGoogleClient();
+
+googleBtn.addEventListener('click', () => {
+  if (GOOGLE_CLIENT_ID.includes('DÁN_CLIENT_ID')) {
+    alert('Bạn cần dán Google Client ID của mình vào code trước (xem chú thích trong file HTML).');
+    return;
+  }
+  if (!tokenClient) {
+    alert('Thư viện Google chưa sẵn sàng, thử lại sau vài giây.');
+    return;
+  }
+  tokenClient.requestAccessToken({ prompt: accessToken ? '' : 'consent' });
+});
+
+async function createNewSpreadsheet(title) {
+  const res = await fetch('https://sheets.googleapis.com/v4/spreadsheets', {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer ' + accessToken,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      properties: { title },
+      sheets: [{ properties: { title: 'DanhSachMa' } }]
+    })
+  });
+  if (!res.ok) throw new Error('Tạo spreadsheet thất bại: ' + res.status);
+  return res.json();
+}
+
+async function writeValuesToSheet(spreadsheetId, values) {
+  const range = `DanhSachMa!A1`;
+  const res = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=RAW`,
+    {
+      method: 'PUT',
+      headers: {
+        'Authorization': 'Bearer ' + accessToken,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ range, majorDimension: 'ROWS', values })
+    }
+  );
+  if (!res.ok) throw new Error('Ghi dữ liệu thất bại: ' + res.status);
+  return res.json();
+}
+
+sheetBtn.addEventListener('click', async () => {
+  if (scannedList.length === 0) {
+    alert('Chưa có dữ liệu để lưu!');
+    return;
+  }
+  if (!accessToken) {
+    alert('Bạn cần bấm "Kết nối Google" trước.');
+    return;
+  }
+  sheetBtn.disabled = true;
+  sheetBtn.textContent = '⏳ Đang lưu...';
+  try {
+    const values = [
+      ['STT', 'Nội dung mã', 'Loại mã', 'Thời gian quét'],
+      ...scannedList.map((item, idx) => [idx + 1, item.content, item.format, item.time])
+    ];
+
+    if (!currentSpreadsheetId) {
+      const now = new Date();
+      const title = `Danh sach ma quet - ${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}`;
+      const sheet = await createNewSpreadsheet(title);
+      currentSpreadsheetId = sheet.spreadsheetId;
+    }
+
+    await writeValuesToSheet(currentSpreadsheetId, values);
+
+    const url = `https://docs.google.com/spreadsheets/d/${currentSpreadsheetId}/edit`;
+    sheetLink.style.display = 'block';
+    sheetLink.innerHTML = `✅ Đã lưu — <a href="${url}" target="_blank" rel="noopener">Mở Google Sheet</a>`;
+    googleStatus.textContent = '✅ Đã đồng bộ với Google Sheet';
+  } catch (err) {
+    // Token có thể đã hết hạn, yêu cầu kết nối lại
+    if (String(err.message).includes('401') || String(err.message).includes('403')) {
+      accessToken = null;
+      googleBtn.textContent = '🔑 Kết nối Google';
+      googleStatus.textContent = '⚠️ Phiên hết hạn, hãy kết nối lại';
+    } else {
+      googleStatus.textContent = '❌ Lỗi: ' + err.message;
+    }
+  } finally {
+    sheetBtn.disabled = !accessToken;
+    sheetBtn.textContent = '📤 Lưu vào Google Sheet';
+  }
+});
+</script>
+</body>
+</html>
